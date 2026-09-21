@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <title>Demo Robot Controller</title>
+    <style>
+        html, body {
+            margin: 0; padding: 0; height: 100%; overflow: hidden;
+            background: #111; touch-action: none; -webkit-user-select: none;
+            user-select: none; -webkit-touch-callout: none;
+            font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif;
+            color: #ccc;
+        }
+        .topbar {
+            position: absolute; top: 0; left: 0; right: 0;
+            display: flex; flex-direction: column; align-items: center;
+            padding: 10px 0; gap: 4px;
+        }
+        h1 { margin: 4px 0; font-size: 26px; color: #999; letter-spacing: 2px; }
+        .status { font-size: 13px; color: #888; }
+        #modeBtn {
+            font-size: 16px; padding: 10px 26px; border-radius: 8px; border: none;
+            font-weight: bold; margin-top: 6px; letter-spacing: 1px;
+        }
+        #modeBtn.driver { background: #2ea043; color: white; }
+        #modeBtn.auton  { background: #d29922; color: black; }
+
+        .zone {
+            position: absolute; top: 0; bottom: 0; width: 50%;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            pointer-events: none;
+        }
+        .zone.left { left: 0; }
+        .zone.right { right: 0; }
+        .zone-label { color: #666; font-size: 13px; margin-bottom: 12px; letter-spacing: 2px; }
+
+        .base {
+            width: 160px; height: 160px; border-radius: 50%;
+            background: rgba(255,255,255,0.08);
+            border: 2px solid rgba(255,255,255,0.2);
+            position: relative; touch-action: none;
+            pointer-events: auto;
+            transition: opacity 0.2s;
+        }
+        .base.disabled { opacity: 0.25; pointer-events: none; }
+        .knob {
+            width: 64px; height: 64px; border-radius: 50%;
+            background: rgba(0, 180, 255, 0.85);
+            position: absolute; left: 48px; top: 48px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body oncontextmenu="return false">
+    <div class="topbar">
+        <h1>Demo Robot Controller</h1>
+        <div class="status" id="status">connecting...</div>
+        <div class="status" id="readout">steer: 0.00, 0.00 &nbsp; throttle: 0.00, 0.00</div>
+        <button id="modeBtn" class="driver">DRIVER CONTROL</button>
+    </div>
+
+    <div class="zone left">
+        <div class="zone-label">STEERING</div>
+        <div class="base" id="baseSteer"><div class="knob" id="knobSteer"></div></div>
+    </div>
+    <div class="zone right">
+        <div class="zone-label">THROTTLE</div>
+        <div class="base" id="baseThrottle"><div class="knob" id="knobThrottle"></div></div>
+    </div>
+
+<script>
+document.addEventListener('touchmove', function (e) { e.preventDefault(); }, { passive: false });
+
+function makeJoystick(baseId, knobId) {
+    const base = document.getElementById(baseId);
+    const knob = document.getElementById(knobId);
+    const radius = base.clientWidth / 2 - knob.clientWidth / 2;
+    let active = false;
+    let x = 0, y = 0; // -1..1 each axis
+
+    function setKnob(dx, dy) {
+        knob.style.left = (48 + dx) + 'px';
+        knob.style.top  = (48 + dy) + 'px';
+    }
+    function reset() { x = 0; y = 0; setKnob(0, 0); }
+
+    function onMove(clientX, clientY) {
+        const rect = base.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        let dx = clientX - cx;
+        let dy = clientY - cy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > radius) {
+            dx = (dx / dist) * radius;
+            dy = (dy / dist) * radius;
+        }
+        setKnob(dx, dy);
+        x = dx / radius;
+        y = dy / radius;
+    }
+
+    base.addEventListener('pointerdown', function (e) {
+        if (base.classList.contains('disabled')) return;
+        active = true;
+        base.setPointerCapture(e.pointerId);
+        onMove(e.clientX, e.clientY);
+    });
+    base.addEventListener('pointermove', function (e) { if (active) onMove(e.clientX, e.clientY); });
+    function end() { active = false; reset(); }
+    base.addEventListener('pointerup', end);
+    base.addEventListener('pointercancel', end);
+
+    return {
+        get x() { return x; },
+        get y() { return y; },
+        reset: reset,
+    };
+}
+
+const steerStick = makeJoystick('baseSteer', 'knobSteer');
+const throttleStick = makeJoystick('baseThrottle', 'knobThrottle');
+
+let isAuton = false;
+const modeBtn = document.getElementById('modeBtn');
+const baseSteerEl = document.getElementById('baseSteer');
+const baseThrottleEl = document.getElementById('baseThrottle');
+
+modeBtn.addEventListener('click', function () {
+    isAuton = !isAuton;
+    if (isAuton) {
+        modeBtn.textContent = 'AUTONOMOUS';
+        modeBtn.classList.remove('driver');
+        modeBtn.classList.add('auton');
+        baseSteerEl.classList.add('disabled');
+        baseThrottleEl.classList.add('disabled');
+        steerStick.reset();
+        throttleStick.reset();
+    } else {
+        modeBtn.textContent = 'DRIVER CONTROL';
+        modeBtn.classList.remove('auton');
+        modeBtn.classList.add('driver');
+        baseSteerEl.classList.remove('disabled');
+        baseThrottleEl.classList.remove('disabled');
+    }
+});
+
+// ---- WebSocket ----
+var connection = null;
+var statusEl;
+
+window.addEventListener('load', function () {
+    statusEl = document.getElementById('status');
+    statusEl.innerText = connection ? 'connecting...' : 'disconnected';
+});
+
+try {
+    connection = new WebSocket('ws://' + location.hostname + '/ws');
+    connection.onopen = function () {
+        console.log('WebSocket connected');
+        if (statusEl) statusEl.innerText = 'connected';
+    };
+    connection.onerror = function (error) {
+        console.log('WebSocket error: ', error);
+    };
+    connection.onclose = function () {
+        console.log('WebSocket closed');
+        if (statusEl) statusEl.innerText = 'disconnected';
+        connection = null;
+    };
+    connection.onmessage = function (e) {
+        console.log('Server: ', e.data);
+    };
+} catch (err) {
+    console.log('Could not open WebSocket (page not served by the ESP32?):', err);
+}
+
+// Sends the full state every 60ms regardless of whether anything moved, so
+// holding a stick steady never looks "stale" to the ESP32's watchdog. While
+// Autonomous is selected, all four axes are forced to -1.00 and the
+// joysticks are disabled above -- this keeps the wire format identical in
+// both modes, which is what lets the C side reuse the same arcade-drive
+// mixing for opcontrol() and auton() (see main/l298n_robot_main.c).
+setInterval(function () {
+    if (!connection || connection.readyState !== WebSocket.OPEN) return;
+
+    var sx, sy, tx, ty;
+    if (isAuton) {
+        sx = sy = tx = ty = -1;
+    } else {
+        sx = steerStick.x;
+        sy = steerStick.y;
+        tx = throttleStick.x;
+        ty = throttleStick.y;
+    }
+
+    document.getElementById('readout').innerText =
+        'steer: ' + sx.toFixed(2) + ', ' + sy.toFixed(2) +
+        '   throttle: ' + tx.toFixed(2) + ', ' + ty.toFixed(2);
+
+    var msg = sx.toFixed(2) + ',' + sy.toFixed(2) + ',' +
+              tx.toFixed(2) + ',' + ty.toFixed(2) + ',' +
+              (isAuton ? '1' : '0');
+    connection.send(msg);
+}, 60);
+</script>
+</body>
+</html>
