@@ -4,9 +4,6 @@
  * 
  * @defgroup l298n_motor L298N Motor Driver
  * @ingroup l298n_motor
- * 
- * @author Sidharth N
- * @date 23 September 2026
  *
  * Header for the L298N motor channel driver abstraction.
  * Provides a C/C++ compatible API to create, control, and destroy one motor channel

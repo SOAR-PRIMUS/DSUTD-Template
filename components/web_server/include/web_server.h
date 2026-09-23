@@ -6,9 +6,6 @@
  * @defgroup web_server Web Server
  * @ingroup web_server
  * 
- * @author Sidharth N
- * @date 22 September 2026
- * 
  * Header for the web server interface that serves the controller webpage and
  * receives joystick data over WebSocket.
  */

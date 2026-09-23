@@ -4,9 +4,6 @@
  * 
  * @ingroup l298n_motor
  * 
- * @author Sidharth N
- * @date 23 September 2026
- * 
  * Source code for the L298N motor channel driver abstraction.  
  */
 
@@ -36,6 +33,7 @@ struct l298n_motor_t {
     uint32_t period_ticks;
 };
 
+// Internal: struct to collect motor config params
 typedef struct {
     int in1_gpio_num;     // GPIO pin wired to the L298N's first IN pin
     int in2_gpio_num;     // GPIO pin wired to the L298N's second IN pin
@@ -73,10 +71,9 @@ esp_err_t l298n_motor_new_mcpwm_device(const l298n_motor_config_t *config,
     gpio_set_level(config->in1_gpio_num, 0);
     gpio_set_level(config->in2_gpio_num, 0);
 
-    // EN pin is driven by a single MCPWM comparator/generator: high from the
-    // start of the period until the compare threshold, then low. That single
-    // PWM duty is exactly what the L298N's enable pin expects.
-    ESP_LOGI(TAG, "Create MCPWM timer, group %d", mcpwm_config->group_id);
+    // Create & setup MCPWM resources
+ 
+    ESP_LOGI(TAG, "Creating MCPWM timer, group %d", mcpwm_config->group_id);
     mcpwm_timer_config_t timer_config = {
         .group_id = mcpwm_config->group_id,
         .clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT,
@@ -84,37 +81,39 @@ esp_err_t l298n_motor_new_mcpwm_device(const l298n_motor_config_t *config,
         .period_ticks = motor->period_ticks,
         .count_mode = MCPWM_TIMER_COUNT_MODE_UP,
     };
-    ESP_GOTO_ON_ERROR(mcpwm_new_timer(&timer_config, &motor->timer), err, TAG, "create timer failed");
+    ESP_GOTO_ON_ERROR(mcpwm_new_timer(&timer_config, &motor->timer), err, TAG, "Creating timer failed");
 
-    ESP_LOGI(TAG, "Create MCPWM operator");
+    ESP_LOGI(TAG, "Creating MCPWM operator");
     mcpwm_operator_config_t operator_config = {
         .group_id = mcpwm_config->group_id,
     };
-    ESP_GOTO_ON_ERROR(mcpwm_new_operator(&operator_config, &motor->operator), err, TAG, "create operator failed");
-    ESP_GOTO_ON_ERROR(mcpwm_operator_connect_timer(motor->operator, motor->timer), err, TAG, "connect timer failed");
+    ESP_GOTO_ON_ERROR(mcpwm_new_operator(&operator_config, &motor->operator), err, TAG, "Create operator failed");
+    ESP_GOTO_ON_ERROR(mcpwm_operator_connect_timer(motor->operator, motor->timer), err, TAG, "Connecting timer failed");
 
     ESP_LOGI(TAG, "Create comparator");
     mcpwm_comparator_config_t comparator_config = {
         .flags.update_cmp_on_tez = true,
     };
-    ESP_GOTO_ON_ERROR(mcpwm_new_comparator(motor->operator, &comparator_config, &motor->comparator), err, TAG, "create comparator failed");
-    ESP_GOTO_ON_ERROR(mcpwm_comparator_set_compare_value(motor->comparator, 0), err, TAG, "set init compare failed");
+    ESP_GOTO_ON_ERROR(mcpwm_new_comparator(motor->operator, &comparator_config, &motor->comparator), err, TAG, "Creating comparator failed");
+    ESP_GOTO_ON_ERROR(mcpwm_comparator_set_compare_value(motor->comparator, 0), err, TAG, "Set init compare failed");
 
     ESP_LOGI(TAG, "Create PWM generator on GPIO%d (EN)", config->en_gpio_num);
     mcpwm_generator_config_t generator_config = {
         .gen_gpio_num = config->en_gpio_num,
     };
-    ESP_GOTO_ON_ERROR(mcpwm_new_generator(motor->operator, &generator_config, &motor->generator), err, TAG, "create generator failed");
+    ESP_GOTO_ON_ERROR(mcpwm_new_generator(motor->operator, &generator_config, &motor->generator), err, TAG, "Creating generator failed");
 
+    // 
     ESP_GOTO_ON_ERROR(mcpwm_generator_set_action_on_timer_event(motor->generator,
         MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, MCPWM_TIMER_EVENT_EMPTY, MCPWM_GEN_ACTION_HIGH)),
-        err, TAG, "set generator timer action failed");
+        err, TAG, "Set generator timer action failed");
     ESP_GOTO_ON_ERROR(mcpwm_generator_set_action_on_compare_event(motor->generator,
         MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, motor->comparator, MCPWM_GEN_ACTION_LOW)),
-        err, TAG, "set generator compare action failed");
+        err, TAG, "Set generator compare action failed");
 
-    ESP_GOTO_ON_ERROR(mcpwm_timer_enable(motor->timer), err, TAG, "enable timer failed");
-    ESP_GOTO_ON_ERROR(mcpwm_timer_start_stop(motor->timer, MCPWM_TIMER_START_NO_STOP), err, TAG, "start timer failed");
+    // Attempt to start MCPWM timer
+    ESP_GOTO_ON_ERROR(mcpwm_timer_enable(motor->timer), err, TAG, "Enable timer failed");
+    ESP_GOTO_ON_ERROR(mcpwm_timer_start_stop(motor->timer, MCPWM_TIMER_START_NO_STOP), err, TAG, "Start timer failed");
 
     *ret_motor = motor;
     return ESP_OK;

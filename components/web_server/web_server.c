@@ -71,25 +71,25 @@ static uint8_t mac[MAC_ADDR_SIZE];
 
 // ----------- Misc functions -----------
 static esp_err_t load_mac_address(void) {
-  esp_err_t ret = esp_wifi_get_mac(WIFI_IF_AP, mac);
-  ESP_LOGI("MAC address", "MAC address: %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  return ret;
+    esp_err_t ret = esp_wifi_get_mac(WIFI_IF_AP, mac);
+    ESP_LOGI("MAC address", "MAC address: %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    return ret;
 }
 
 // ----------- HTTP section or something -----------
 
 // Handler code to serve the index page upon receiving a `GET /` request.
 static esp_err_t index_get_handler(httpd_req_t *req) {
-  size_t len = index_html_end - index_html_start;
-  httpd_resp_set_type(req, "text/html"); // Sets MIME type of the response; defaults to HTML anyways, just a precaution
-  return httpd_resp_send(req, (const char*)index_html_start, len);
+    size_t len = index_html_end - index_html_start;
+    httpd_resp_set_type(req, "text/html"); // Sets MIME type of the response; defaults to HTML anyways, just a precaution
+    return httpd_resp_send(req, (const char*)index_html_start, len);
 }
 
 // Sets URI of webpage/index.html
 static const httpd_uri_t index_uri = {
-  .uri      = "/",
-  .method   = HTTP_GET,
-  .handler  = index_get_handler,
+    .uri      = "/",
+    .method   = HTTP_GET,
+    .handler  = index_get_handler,
 };
 
 
@@ -98,21 +98,22 @@ static const httpd_uri_t index_uri = {
 // Handler code to establish a WebSocket connection between the server and client,
 // then receive joystick data from the client's controller page.
 static esp_err_t websocket_handler(httpd_req_t *req) {
-  // One-off call to create WebSocket handshake when
-  // a GET request is made for index.html
-  if (req->method == HTTP_GET) {
-    int fd = httpd_req_to_sockfd(req);
-    ESP_LOGI(TAG, "WebSocket client connected: fd=%d", fd);
-    if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
-      s_websocket_fd = fd;
-      s_connected = true;
-      xSemaphoreGive(s_lock);
+    // One-off call to create WebSocket handshake when
+    // a GET request is made for index.html
+    if (req->method == HTTP_GET) {
+        int fd = httpd_req_to_sockfd(req);
+        ESP_LOGI(TAG, "WebSocket client connected: fd=%d", fd);
+        if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+        s_websocket_fd = fd;
+        s_connected = true;
+        xSemaphoreGive(s_lock);
+        }
+
+        return ESP_OK;
     }
 
-    return ESP_OK;
-  }
-
-  httpd_ws_frame_t ws_packet;
+    // Initialize memory for WebSocket packet
+    httpd_ws_frame_t ws_packet;
     memset(&ws_packet, 0, sizeof(ws_packet));
     ws_packet.type = HTTPD_WS_TYPE_TEXT;
 
@@ -215,30 +216,31 @@ static void wifi_initialize_softap(void)
     ret = load_mac_address();
     uint8_t attempts = 0;
 
+    // Update Wifi SSID & password with MAC address digits if loading was successful
     if (ret == ESP_OK) {
-      snprintf(ssid, sizeof(ssid), "%s_%02X%02X", "RobotControl", mac[0], mac[1]);
-      snprintf(password, sizeof(password), "%02X%02X_%02X%02X", mac[0], mac[1], mac[0], mac[1]);
+        snprintf(ssid, sizeof(ssid), "%s_%02X%02X", "RobotControl", mac[0], mac[1]);
+        snprintf(password, sizeof(password), "%02X%02X_%02X%02X", mac[0], mac[1], mac[0], mac[1]);
     }
     // Attempt to reinitialize the Soft-AP if received ERR_WIFI_NOT_INIT
     else if (ret == ESP_ERR_WIFI_NOT_INIT) {
-      ESP_LOGW(TAG, "Failed to load MAC address: Soft-AP not initialized");
+        ESP_LOGW(TAG, "Failed to load MAC address: Soft-AP not initialized");
 
-      if (attempts > RETRY_ATTEMPTS) {
-        ESP_LOGE(TAG, "Failed to initialize Soft-AP after %d attempts; aborting", RETRY_ATTEMPTS);
-        ESP_LOGI(TAG, "Loading default SSID: %s", DEFAULT_WIFI_AP_SSID);
-        strlcpy(ssid, DEFAULT_WIFI_AP_SSID, sizeof(ssid));
-        strlcpy(password, DEFAULT_WIFI_AP_PASSWORD, sizeof(password));
-      }
+        if (attempts > RETRY_ATTEMPTS) {
+            ESP_LOGE(TAG, "Failed to initialize Soft-AP after %d attempts; aborting", RETRY_ATTEMPTS);
+            ESP_LOGI(TAG, "Loading default SSID: %s", DEFAULT_WIFI_AP_SSID);
+            strlcpy(ssid, DEFAULT_WIFI_AP_SSID, sizeof(ssid));
+            strlcpy(password, DEFAULT_WIFI_AP_PASSWORD, sizeof(password));
+        }
 
-      attempts++;
-      ESP_LOGW(TAG, "Retry initialize Soft-AP again: attempt %d", attempts);
+        attempts++;
+        ESP_LOGW(TAG, "Retry initialize Soft-AP again: attempt %d", attempts);
     }
     // Default behavior in case of misc error
     else {
-      ESP_LOGE(TAG, "Failed to load MAC address: %d", ret);
-      ESP_LOGI(TAG, "Loading default SSID: %s", DEFAULT_WIFI_AP_SSID);
-      strlcpy(ssid, DEFAULT_WIFI_AP_SSID, sizeof(ssid));
-      strlcpy(password, DEFAULT_WIFI_AP_PASSWORD, sizeof(password));
+        ESP_LOGE(TAG, "Failed to load MAC address: %d", ret);
+        ESP_LOGI(TAG, "Loading default SSID: %s", DEFAULT_WIFI_AP_SSID);
+        strlcpy(ssid, DEFAULT_WIFI_AP_SSID, sizeof(ssid));
+        strlcpy(password, DEFAULT_WIFI_AP_PASSWORD, sizeof(password));
     }
 
     // Set the Wifi configuration
@@ -268,35 +270,35 @@ static void wifi_initialize_softap(void)
 
 esp_err_t web_server_start(void)
 {
-  // Initialize the wifi access point before starting HTTP server
-  wifi_initialize_softap();
+    // Initialize the wifi access point before starting HTTP server
+    wifi_initialize_softap();
 
-  // Uses mutex to ensure thread-safe mutations
-  // since I have no experience with how ESP's dual-core processor
-  // will handle my precious variable
-  s_lock = xSemaphoreCreateMutex();
-  if (s_lock == NULL) {
-    ESP_LOGE(TAG, "Failed to create mutex");
-    return ESP_FAIL;
-  }
+    // Uses mutex to ensure thread-safe mutations
+    // since I have no experience with how ESP's dual-core processor
+    // will handle my precious variable
+    s_lock = xSemaphoreCreateMutex();
+    if (s_lock == NULL) {
+        ESP_LOGE(TAG, "Failed to create mutex");
+        return ESP_FAIL;
+    }
 
-  // Set httpd config
-  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-  config.close_fn = on_client_close;
+    // Set httpd config
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.close_fn = on_client_close;
 
-  // Attempt to start the server
-  esp_err_t ret = httpd_start(&s_server, &config);
-  if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to start HTTP server: %d", ret);
-    return ret;
-  }
+    // Attempt to start the server
+    esp_err_t ret = httpd_start(&s_server, &config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start HTTP server: %d", ret);
+        return ret;
+    }
 
-  // Register URI handlers for the WebSocket and index page
-  httpd_register_uri_handler(s_server, &index_uri);
-  httpd_register_uri_handler(s_server, &websocket_uri);
+    // Register URI handlers for the WebSocket and index page
+    httpd_register_uri_handler(s_server, &index_uri);
+    httpd_register_uri_handler(s_server, &websocket_uri);
 
-  ESP_LOGI(TAG, "Web server started");
-  return ESP_OK;
+    ESP_LOGI(TAG, "Web server started");
+    return ESP_OK;
 }
 
 
@@ -313,28 +315,30 @@ esp_err_t web_server_stop(void)
 
 bool web_server_get_latest_joystick(joystick_data_t *out)
 {
-  bool connected = false;
-  if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
-    *out = s_latest;
-    connected = s_connected;
-    xSemaphoreGive(s_lock);
-  }
-  return connected;
+    bool connected = false;
+    // Load new joystick data if lock was successfully obtained
+    // and update default value of connected, as the connection is obviously alive 
+    if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+        *out = s_latest;
+        connected = s_connected;
+        xSemaphoreGive(s_lock);
+    }
+    return connected;
 }
 
 int64_t web_server_ms_since_latest_joystick(void)
 {
-  int64_t last = 0;
-  if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
-    // Sets time from last update only if lock successfully obtained
-    last = s_last_updated_us;
-    xSemaphoreGive(s_lock);
-  }
-  if (last == 0) {
-    // Fallback; assume no message received yet
-    return INT64_MAX;
-  }
+    int64_t last = 0;
+    if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+        // Sets time from last update only if lock successfully obtained
+        last = s_last_updated_us;
+        xSemaphoreGive(s_lock);
+    }
+    if (last == 0) {
+        // Fallback; assume no message received yet
+        return INT64_MAX;
+    }
 
-  // Convert from microseconds to milliseconds before returning
-  return (esp_timer_get_time() - last) / 1000;
+    // Convert from microseconds to milliseconds before returning
+    return (esp_timer_get_time() - last) / 1000;
 }

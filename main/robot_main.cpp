@@ -17,6 +17,7 @@
 #include "web_server.h"
 #include "l298n_motor.h"
 
+// Component-specific tag for logging
 static const char *TAG = "my_robot";
 
 // GPIO pin numbers
@@ -55,6 +56,8 @@ static void drive(int32_t left_percent, int32_t right_percent) {
 
 // Code to run while in autonomous mode.
 static void auton(void) {
+    // Basic autonomous: linear motion test & turning test
+
     ESP_LOGI(TAG, "Moving forward");
     drive(100, 100);
     vTaskDelay(pdMS_TO_TICKS(1500));
@@ -86,7 +89,7 @@ static void auton(void) {
 
 // Code to run while in driver control mode.
 static void opcontrol(const joystick_data_t *js_data) {
-    // Implementation of arcade drive
+    // Basic implementation of arcade drive
 
     float throttle = -js_data->throttle_y;
     float steer = js_data->steer_x;
@@ -109,37 +112,48 @@ static void opcontrol(const joystick_data_t *js_data) {
 // ----------- Main entry point -----------
 // NOTE: DO NOT REMOVE EXTERN "C", ELSE THE PROGRAM WILL FAIL TO LOAD PROPERLY
 extern "C" void app_main(void)
-{
+{  
+    // Initialize motors
     left_motor = create_motor("Left motor", LEFT_IN1_GPIO, LEFT_IN2_GPIO, ENA_GPIO);
     right_motor = create_motor("Right motor", RIGHT_IN1_GPIO, RIGHT_IN2_GPIO, ENB_GPIO);
     ESP_LOGI(TAG, "Motors successfully initialized");
 
+    // Start web server
     ESP_ERROR_CHECK(web_server_start());
 
     int64_t last_status_log_us = 0;
 
+    // Enter main loop
     while (1) {
         joystick_data_t js;
-        bool disconnected = web_server_get_latest_joystick(&js);
+        // Loads joystick data into js and stores return value in is_disconnected
+        // Note: detection logic for is_disconnected is currently bugged
+        bool is_disconnected = web_server_get_latest_joystick(&js);
         bool stale = web_server_ms_since_latest_joystick() > CONTROL_TIMEOUT_MS;
 
-        if (disconnected || stale) {
-            // Brake both motors as a precaution
+        // Brake both motors as a precaution if connection dropped or is stale
+        if (is_disconnected || stale) {
             l298n_motor_brake(left_motor);
             l298n_motor_brake(right_motor);
-        } else if (js.is_auton) {
-            auton(); // Switch to autonomous if enabled from the controller web page
-        } else{
+        }
+        // Switch to autonomous if enabled from the controller webpage
+        else if (js.is_auton) {
+            auton(); 
+        }
+        // Switch to driver control if enabled from the controller webpage
+        else {
             opcontrol(&js);
         }
 
-        int64_t now_us = esp_timer_get_time(); // Time in microseconds
-        if (now_us - last_status_log_us > 500000) { // Print logs twice a second at most
+        int64_t now_us = esp_timer_get_time(); // Current time in microseconds
+        // Print logs twice a second at most
+        if (now_us - last_status_log_us > 500000) { 
             last_status_log_us = now_us;
-            ESP_LOGI(TAG, "disconnected=%d stale=%d auton=%d steer_x=%.2f throttle_y=%.2f",
-                     disconnected, stale, js.is_auton, js.steer_x, js.throttle_y);
+            ESP_LOGI(TAG, "is_disconnected=%d stale=%d auton=%d steer_x=%.2f throttle_y=%.2f",
+                     is_disconnected, stale, js.is_auton, js.steer_x, js.throttle_y);
         }
 
+        // Sleep to prevent resource starvation
         vTaskDelay(pdMS_TO_TICKS(CONTROL_LOOP_PERIOD_MS));
     }
 }
