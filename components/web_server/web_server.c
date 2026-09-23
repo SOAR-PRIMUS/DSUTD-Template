@@ -1,3 +1,16 @@
+/**
+ * @file l298n_motor.c
+ * @brief Component code to manage the web server
+ * 
+ * @ingroup web_server
+ * 
+ * @author Sidharth N
+ * @date 22 September 2026
+ * 
+ * Source code for the web server used for delivering the controller page over the ESP's SoftAP, as well as
+ * fetching joystick data from the user controller page via WebSocket.
+ */
+
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -5,18 +18,31 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_err.h"
+#include "esp_wifi.h"
+#include "esp_netif.h"
+#include "esp_event.h"
+#include "nvs_flash.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
 #include "web_server.h"
 
+// Component-specific tag for logging
 static const char *TAG = "web_server";
 
 // Maximum size expected for a message from the WebSocket connection
 // Assuming a longest plausible message of 11 characters ("-1.00,-1.00"),
 // giving it some extra leeway before rejecting the message.
 #define WEBSOCKET_RX_BUFFER_SIZE 32
+
+// WiFi AP configuration
+// TODO: change the password for deployment, either make it unique to each robot or figure out a centralized network for 20 ESP32-client connections
+#define WIFI_AP_SSID       "RobotControl"
+#define WIFI_AP_PASSWORD   "robot1234"
+#define WIFI_AP_CHANNEL    1
+#define WIFI_AP_MAX_CONN   2
 
 
 // Embedded copy of webpage/index.html
@@ -37,6 +63,7 @@ static int64_t s_last_updated_us = 0;
 
 // ----------- HTTP section or something -----------
 
+// Handler code to serve the index page upon receiving a `GET /` request.
 static esp_err_t index_get_handler(httpd_req_t *req) {
   size_t len = index_html_end - index_html_start;
   httpd_resp_set_type(req, "text/html"); // Sets MIME type of the response; defaults to HTML anyways, just a precaution
@@ -52,6 +79,9 @@ static const httpd_uri_t index_uri = {
 
 
 // ----------- WebSocket section or something -----------
+
+// Handler code to establish a WebSocket connection between the server and client,
+// then receive joystick data from the client's controller page.
 static esp_err_t websocket_handler(httpd_req_t *req) {
   // One-off call to create WebSocket handshake when
   // a GET request is made for index.html
@@ -113,14 +143,14 @@ static esp_err_t websocket_handler(httpd_req_t *req) {
         }
       } else {
         // Fallback for malformed messages; will not stop execution
-        ESP_LOGW(TAG, "Ignoring unparseable WS message: %s", buf);
+        ESP_LOGW(TAG, "Ignoring unparseable websock msg: %s", buf);
       }
     }
 
     return ESP_OK;
 }
 
-
+// URI endpoint for the WebSocket connection
 static const httpd_uri_t websocket_uri = {
     .uri          = "/ws",
     .method       = HTTP_GET,
@@ -144,11 +174,56 @@ static void on_client_close(httpd_handle_t hd, int socket_fd)
     close(socket_fd); // I in fact, choose to claim responsibility for close_fn with this
 }
 
+// Starts the Wifi access point the control page connects to.
+// Must be called before web_server_start() else httpd doesn't have a network interface to bind to
+// which makes httpd sad, and therefore me :(
+static void wifi_initialize_softap(void)
+{
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_ap();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    // Set the Wifi configuration
+    wifi_config_t wifi_config = {
+        .ap = {
+            .ssid = WIFI_AP_SSID,
+            .ssid_len = strlen(WIFI_AP_SSID),
+            .channel = WIFI_AP_CHANNEL,
+            .password = WIFI_AP_PASSWORD,
+            .max_connection = WIFI_AP_MAX_CONN,
+            .authmode = WIFI_AUTH_WPA2_PSK,
+        },
+    };
+    // If no password, set the network to open
+    if (strlen(WIFI_AP_PASSWORD) == 0) {
+        wifi_config.ap.authmode = WIFI_AUTH_OPEN;
+    }
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_LOGI(TAG, "WiFi AP started; SSID:%s password:%s channel:%d",
+             WIFI_AP_SSID, WIFI_AP_PASSWORD, WIFI_AP_CHANNEL);
+}
+
 // ---------------- Public API functions or something ----------------
 
-// Starts the web server. Don't think I need to explain this one
 esp_err_t web_server_start(void)
 {
+  // Initialize the wifi access point before starting HTTP server
+  wifi_initialize_softap();
+
   // Uses mutex to ensure thread-safe mutations
   // since I have no experience with how ESP's dual-core processor
   // will handle my precious variable
@@ -177,17 +252,17 @@ esp_err_t web_server_start(void)
   return ESP_OK;
 }
 
-// Stops the web server, for whatever reason you'd want to do this
+
 esp_err_t web_server_stop(void)
 {
     if (s_server) {
         httpd_stop(s_server);
         s_server = NULL;
     }
+    ESP_LOGI(TAG, "Web server stopped");
     return ESP_OK;
 }
 
-// Retrieves latest joystick data; to be used along with web_server_ms_since_last_joystick
 bool web_server_get_latest_joystick(joystick_data_t *out)
 {
   bool connected = false;
@@ -199,7 +274,6 @@ bool web_server_get_latest_joystick(joystick_data_t *out)
   return connected;
 }
 
-// Retrieves time in milliseconds since last joystick data update
 int64_t web_server_ms_since_latest_joystick(void)
 {
   int64_t last = 0;

@@ -27,3 +27,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Temp files
+tmp/

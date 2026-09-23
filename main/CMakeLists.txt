@@ -1,3 +1,3 @@
-idf_component_register(SRCS "l298n_robot_main.c"
+idf_component_register(SRCS "robot_main.cpp"
                         INCLUDE_DIRS "."
-                        REQUIRES web_server esp_wifi esp_event esp_timer esp_netif nvs_flash esp_driver_gpio)
+                        REQUIRES web_server l298n_motor esp_timer)
