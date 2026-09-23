@@ -4,9 +4,6 @@
  * 
  * @ingroup web_server
  * 
- * @author Sidharth N
- * @date 22 September 2026
- * 
  * Source code for the web server used for delivering the controller page over the ESP's SoftAP, as well as
  * fetching joystick data from the user controller page via WebSocket.
  */
@@ -37,10 +34,18 @@ static const char *TAG = "web_server";
 // giving it some extra leeway before rejecting the message.
 #define WEBSOCKET_RX_BUFFER_SIZE 32
 
+// Size for MAC address buffer
+#define MAC_ADDR_SIZE 6
+// Number of retry attempts for initializing Soft-AP when retrieving MAC address
+#define RETRY_ATTEMPTS 3
+// Max size for WiFi SSID
+#define SSID_LEN 50
+// Max size for WiFi password
+#define PASSWORD_LEN 50
+
 // WiFi AP configuration
-// TODO: change the password for deployment, either make it unique to each robot or figure out a centralized network for 20 ESP32-client connections
-#define WIFI_AP_SSID       "RobotControl"
-#define WIFI_AP_PASSWORD   "robot1234"
+#define DEFAULT_WIFI_AP_SSID       "RobotControl_DEFAULT"
+#define DEFAULT_WIFI_AP_PASSWORD   "robot1234"
 #define WIFI_AP_CHANNEL    1
 #define WIFI_AP_MAX_CONN   2
 
@@ -60,6 +65,16 @@ static bool s_connected = false;
 static int s_websocket_fd = -1;   // Socket file descriptor for the current client
 static int64_t s_last_updated_us = 0;
 
+// MAC address of ESP32
+static uint8_t mac[MAC_ADDR_SIZE];
+
+
+// ----------- Misc functions -----------
+static esp_err_t load_mac_address(void) {
+  esp_err_t ret = esp_wifi_get_mac(WIFI_IF_AP, mac);
+  ESP_LOGI("MAC address", "MAC address: %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  return ret;
+}
 
 // ----------- HTTP section or something -----------
 
@@ -193,19 +208,51 @@ static void wifi_initialize_softap(void)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
+    // Set up WiFi SSID and password
+    char ssid[SSID_LEN] = {0};
+    char password[PASSWORD_LEN] = {0};
+
+    ret = load_mac_address();
+    uint8_t attempts = 0;
+
+    if (ret == ESP_OK) {
+      snprintf(ssid, sizeof(ssid), "%s_%02X%02X", "RobotControl", mac[0], mac[1]);
+      snprintf(password, sizeof(password), "%02X%02X_%02X%02X", mac[0], mac[1], mac[0], mac[1]);
+    }
+    // Attempt to reinitialize the Soft-AP if received ERR_WIFI_NOT_INIT
+    else if (ret == ESP_ERR_WIFI_NOT_INIT) {
+      ESP_LOGW(TAG, "Failed to load MAC address: Soft-AP not initialized");
+
+      if (attempts > RETRY_ATTEMPTS) {
+        ESP_LOGE(TAG, "Failed to initialize Soft-AP after %d attempts; aborting", RETRY_ATTEMPTS);
+        ESP_LOGI(TAG, "Loading default SSID: %s", DEFAULT_WIFI_AP_SSID);
+        strlcpy(ssid, DEFAULT_WIFI_AP_SSID, sizeof(ssid));
+        strlcpy(password, DEFAULT_WIFI_AP_PASSWORD, sizeof(password));
+      }
+
+      attempts++;
+      ESP_LOGW(TAG, "Retry initialize Soft-AP again: attempt %d", attempts);
+    }
+    // Default behavior in case of misc error
+    else {
+      ESP_LOGE(TAG, "Failed to load MAC address: %d", ret);
+      ESP_LOGI(TAG, "Loading default SSID: %s", DEFAULT_WIFI_AP_SSID);
+      strlcpy(ssid, DEFAULT_WIFI_AP_SSID, sizeof(ssid));
+      strlcpy(password, DEFAULT_WIFI_AP_PASSWORD, sizeof(password));
+    }
+
     // Set the Wifi configuration
-    wifi_config_t wifi_config = {
-        .ap = {
-            .ssid = WIFI_AP_SSID,
-            .ssid_len = strlen(WIFI_AP_SSID),
-            .channel = WIFI_AP_CHANNEL,
-            .password = WIFI_AP_PASSWORD,
-            .max_connection = WIFI_AP_MAX_CONN,
-            .authmode = WIFI_AUTH_WPA2_PSK,
-        },
-    };
+    wifi_config_t wifi_config = {0};
+    wifi_config.ap.channel = WIFI_AP_CHANNEL;
+    wifi_config.ap.max_connection = WIFI_AP_MAX_CONN;
+    wifi_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+
+    strlcpy((char *)wifi_config.ap.ssid, ssid, sizeof(wifi_config.ap.ssid));
+    strlcpy((char *)wifi_config.ap.password, password, sizeof(wifi_config.ap.password));
+    wifi_config.ap.ssid_len = strlen((char *)wifi_config.ap.ssid);
+
     // If no password, set the network to open
-    if (strlen(WIFI_AP_PASSWORD) == 0) {
+    if (strlen(DEFAULT_WIFI_AP_PASSWORD) == 0) {
         wifi_config.ap.authmode = WIFI_AUTH_OPEN;
     }
 
@@ -213,8 +260,8 @@ static void wifi_initialize_softap(void)
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI(TAG, "WiFi AP started; SSID:%s password:%s channel:%d",
-             WIFI_AP_SSID, WIFI_AP_PASSWORD, WIFI_AP_CHANNEL);
+    ESP_LOGI(TAG, "WiFi Soft-AP started; SSID:%s password:%s channel:%d",
+             wifi_config.ap.ssid, wifi_config.ap.password, WIFI_AP_CHANNEL);
 }
 
 // ---------------- Public API functions or something ----------------
@@ -260,6 +307,7 @@ esp_err_t web_server_stop(void)
         s_server = NULL;
     }
     ESP_LOGI(TAG, "Web server stopped");
+
     return ESP_OK;
 }
 

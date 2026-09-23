@@ -8,7 +8,6 @@
  */
 
 #include <cmath>
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -18,35 +17,40 @@
 #include "web_server.h"
 #include "l298n_motor.h"
 
-static const char *TAG = "l298n_robot";
+static const char *TAG = "my_robot";
 
 // GPIO pin numbers
 #define LEFT_IN1_GPIO 13
 #define LEFT_IN2_GPIO 14
 #define RIGHT_IN1_GPIO 11
 #define RIGHT_IN2_GPIO 12
+#define ENA_GPIO 10
+#define ENB_GPIO 9
 
 #define LEFT_MOTOR_POLARITY 1 // Whether left motor is reversed
 #define RIGHT_MOTOR_POLARITY -1 // Whether right motor is reversed
 
 // Control loop timing constants
 // Not recommended to change these; will be exposed nonetheless
-
 #define CONTROL_LOOP_PERIOD_MS  20  // Approx. 50 Hz
 #define CONTROL_TIMEOUT_MS      4000 // Coast motors if web page does not respond for these many millis 
 
-// Handles for our motors
+// PWM tuning values
+#define MOTOR_MCPWM_GROUP_ID             0
+#define MOTOR_MCPWM_TIMER_RESOLUTION_HZ  1000000  // 1 MHz -> 1 tick = 1us
+#define MOTOR_PWM_FREQ_HZ                1000     // 1 kHz
 
-static l298n_motor_handle_t s_left_motor;
-static l298n_motor_handle_t s_right_motor;
+// Handles for our motors
+static l298n_motor_handle_t left_motor;
+static l298n_motor_handle_t right_motor;
 
 // ----------- Method definitions -----------
 
-// Convenience method: sets left & right motors to specified percentage values. The magnitude of both values
-// currently does not matter, as MCPWM is not being used. Only the sign is considered.
+// Convenience method: sets left & right motors to specified percentage values.
+// Sign denotes direction, magnitude denotes speed.
 static void drive(int32_t left_percent, int32_t right_percent) {
-    l298n_motor_set(s_left_motor, left_percent * LEFT_MOTOR_POLARITY);
-    l298n_motor_set(s_right_motor, right_percent * RIGHT_MOTOR_POLARITY);
+    l298n_motor_set_signed_speed(left_motor, left_percent);
+    l298n_motor_set_signed_speed(right_motor, right_percent);
 }
 
 // Code to run while in autonomous mode.
@@ -99,14 +103,15 @@ static void opcontrol(const joystick_data_t *js_data) {
     }
 
     // Multiply by 100 + cast to signed int32 before sending to drive() as percentages
-    drive((int32_t)(left_norm * 100), (int32_t)(right_norm * 100));
+    drive((int32_t)(LEFT_MOTOR_POLARITY * left_norm * 100), (int32_t)(RIGHT_MOTOR_POLARITY * right_norm * 100));
 }
 
 // ----------- Main entry point -----------
+// NOTE: DO NOT REMOVE EXTERN "C", ELSE THE PROGRAM WILL FAIL TO LOAD PROPERLY
 extern "C" void app_main(void)
 {
-    ESP_ERROR_CHECK(l298n_motor_new(LEFT_IN1_GPIO, LEFT_IN2_GPIO, &s_left_motor));
-    ESP_ERROR_CHECK(l298n_motor_new(RIGHT_IN1_GPIO, RIGHT_IN2_GPIO, &s_right_motor));
+    left_motor = create_motor("Left motor", LEFT_IN1_GPIO, LEFT_IN2_GPIO, ENA_GPIO);
+    right_motor = create_motor("Right motor", RIGHT_IN1_GPIO, RIGHT_IN2_GPIO, ENB_GPIO);
     ESP_LOGI(TAG, "Motors successfully initialized");
 
     ESP_ERROR_CHECK(web_server_start());
@@ -119,7 +124,9 @@ extern "C" void app_main(void)
         bool stale = web_server_ms_since_latest_joystick() > CONTROL_TIMEOUT_MS;
 
         if (disconnected || stale) {
-            drive(0, 0); // Coast motors if connection is stale or terminated
+            // Brake both motors as a precaution
+            l298n_motor_brake(left_motor);
+            l298n_motor_brake(right_motor);
         } else if (js.is_auton) {
             auton(); // Switch to autonomous if enabled from the controller web page
         } else{
