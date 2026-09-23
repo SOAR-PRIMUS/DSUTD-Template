@@ -8,7 +8,6 @@
  */
 
 #include <cmath>
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -18,7 +17,7 @@
 #include "web_server.h"
 #include "l298n_motor.h"
 
-static const char *TAG = "l298n_robot";
+static const char *TAG = "my_robot";
 
 // GPIO pin numbers
 #define LEFT_IN1_GPIO 13
@@ -33,7 +32,6 @@ static const char *TAG = "l298n_robot";
 
 // Control loop timing constants
 // Not recommended to change these; will be exposed nonetheless
-
 #define CONTROL_LOOP_PERIOD_MS  20  // Approx. 50 Hz
 #define CONTROL_TIMEOUT_MS      4000 // Coast motors if web page does not respond for these many millis 
 
@@ -43,7 +41,6 @@ static const char *TAG = "l298n_robot";
 #define MOTOR_PWM_FREQ_HZ                1000     // 1 kHz
 
 // Handles for our motors
-
 static l298n_motor_handle_t left_motor;
 static l298n_motor_handle_t right_motor;
 
@@ -87,8 +84,6 @@ static void auton(void) {
     vTaskDelay(pdMS_TO_TICKS(2000));
 }
 
-
-
 // Code to run while in driver control mode.
 static void opcontrol(const joystick_data_t *js_data) {
     // Implementation of arcade drive
@@ -112,6 +107,7 @@ static void opcontrol(const joystick_data_t *js_data) {
 }
 
 // ----------- Main entry point -----------
+// NOTE: DO NOT REMOVE EXTERN "C", ELSE THE PROGRAM WILL FAIL TO LOAD PROPERLY
 extern "C" void app_main(void)
 {
     left_motor = create_motor("Left motor", LEFT_IN1_GPIO, LEFT_IN2_GPIO, ENA_GPIO);

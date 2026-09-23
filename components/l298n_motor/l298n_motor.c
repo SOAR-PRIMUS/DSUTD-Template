@@ -48,6 +48,7 @@ typedef struct {
     uint32_t resolution_hz; // MCPWM timer tick resolution, in Hz
 } l298n_motor_mcpwm_config_t;
 
+// Internal method: initialize motor & MCPWM device
 esp_err_t l298n_motor_new_mcpwm_device(const l298n_motor_config_t *config,
                                        const l298n_motor_mcpwm_config_t *mcpwm_config,
                                        l298n_motor_handle_t *ret_motor)
