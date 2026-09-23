@@ -6,13 +6,11 @@
  * @ingroup l298n_motor
  * 
  * @author Sidharth N
- * @date 22 September 2026
+ * @date 23 September 2026
  *
  * Header for the L298N motor channel driver abstraction.
  * Provides a C/C++ compatible API to create, control, and destroy one motor channel
- * using two GPIO pins (IN1/IN2).
- * 
- * Does not support motor control via Pulse Width Modulation (PWM) yet.
+ * using two IN and one EN(able) GPIO pins.
  */
 
 #pragma once
@@ -25,41 +23,81 @@ extern "C" {
 #endif
 
 /**
- * @brief Opaque handle for one L298N-driven motor channel.
+ * @brief Opaque handle for one L298N-driven motor channel
  */
 typedef struct l298n_motor_t *l298n_motor_handle_t;
 
 /**
- * @brief Create one L298N motor channel, with two plain GPIOs for direction. (Speed control via MCPWM
- *        using the EN pins is not supported yet.)
+ * @brief Create one L298N motor channel and return the handle.
  *
- * @param in1_gpio GPIO pin number for L298N IN1
- * @param in2_gpio GPIO pin number for L298N IN2
- * @param out_handle Returned motor handle
- * 
- * @returns An ESP error code, or `ESP_OK` if the operation was successful.
+ * @param label Label for the motor; used for logging
+ * @param in1 GPIO pin wired to the L298N's first IN pin
+ * @param in2 GPIO pin wired to the L298N's second IN pin
+ * @param en GPIO pin wired to the L298N's EN pin
  */
-esp_err_t l298n_motor_new(int in1_gpio, int in2_gpio, l298n_motor_handle_t *out_handle);
+l298n_motor_handle_t create_motor(const char *label, int in1, int in2, int en);
 
 /**
- * @brief Sets the GPIO pins accordingly:
- *        Direction > 0: Forward (IN1 = HIGH, IN2 = LOW)
- *        Direction < 0: Backward (IN1 = LOW, IN2 = HIGH)
- *        Direction = 0: Coast (IN1 = IN2 = LOW)
+ * @brief Change the motor direction to forward by setting the input pins, such that IN1=1, IN2=0.
+ * Combine with `l298n_motor_set_speed()` to move.
  * 
- * @param motor Handle for the L298N motor channel to be modified.
- * @param direction Direction to set the motor to.
- * 
- * @returns An ESP error code, or `ESP_OK` if the operation was successful.
+ * @param motor Handle for the motor
  */
-esp_err_t l298n_motor_set(l298n_motor_handle_t motor, int32_t direction);
+esp_err_t l298n_motor_set_forward(l298n_motor_handle_t motor);
 
 /**
- * @brief Destroy held resources and free the motor handle.
+ * @brief Change the motor direction to backward by setting the input pins, such that IN1=0, IN2=1.
+ * Combine with `l298n_motor_set_speed()` to move.
  * 
- * @param motor Handle for the L298N motor channel to be freed.
+ * @param motor Handle for the motor
+ */
+esp_err_t l298n_motor_set_reverse(l298n_motor_handle_t motor);
+
+/**
+ * @brief Coast the motor by setting both input pins to LOW and no duty.
  * 
- * @returns An ESP error code, or `ESP_OK` if the operation was successful.
+ * @param motor Handle for the motor
+ */
+esp_err_t l298n_motor_set_coast(l298n_motor_handle_t motor);
+
+/**
+ * @brief Brake the motor by setting both input pins to HIGH and maximum PWM duty: motor terminals are shorted together
+ *        (dynamic brake). Draws more current than coasting, use sparingly.
+ * 
+ * @param motor Handle for the motor
+ */
+esp_err_t l298n_motor_brake(l298n_motor_handle_t motor);
+
+/**
+ * @brief Set PWM duty applied to the EN pin, independent of the direction the motor is set to.
+ * @param motor Handle for the motor
+ * @param percent Ranges from 0-100; clamps values
+ */
+esp_err_t l298n_motor_set_speed(l298n_motor_handle_t motor, uint32_t percent);
+
+/**
+ * @brief Convenience method that sets the direction and speed of the motor.
+ * @note Sign of `percent` represents the direction, where positive is forward and 0 coasts. Magnitude represents the speed.
+ * @param motor Handle for the motor
+ * @param percent Ranges from -100 to 100 inclusive; 0 coasts the motor
+ */
+esp_err_t l298n_motor_set_signed_speed(l298n_motor_handle_t motor, int32_t percent);
+
+/**
+ * @brief (Re)start the EN pin's PWM output.
+ * @param motor Handle for the motor
+ */
+esp_err_t l298n_motor_enable(l298n_motor_handle_t motor);
+
+/**
+ * @brief Stop the EN pin's PWM output and release the direction pins.
+ * @param motor Handle for the motor
+ */
+esp_err_t l298n_motor_disable(l298n_motor_handle_t motor);
+
+/**
+ * @brief Destroy MCPWM resources and free the motor handle.
+ * @param motor Handle for the motor
  */
 esp_err_t l298n_motor_del(l298n_motor_handle_t motor);
 
